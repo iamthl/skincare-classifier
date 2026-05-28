@@ -1,0 +1,18 @@
+# =============================================================================
+# Runtime + development dependencies for the Skincare Routine Classifier.
+#
+# Versions are pinned so that every CI build, every developer machine and
+# every Docker image produces identical results - this is the foundation of
+# reproducible CI/CD. Update the pins deliberately, not by accident.
+# =============================================================================
+
+# --- Testing ---------------------------------------------------------------
+pytest==8.3.3
+pytest-cov==5.0.0
+
+# --- Linting / style -------------------------------------------------------
+flake8==7.1.1
+
+# --- Security scanning -----------------------------------------------------
+# Bandit performs static analysis against common Python security pitfalls.
+bandit==1.7.10

@@ -1,0 +1,43 @@
+# Keep the Docker build context small, reproducible and free of secrets.
+# Anything not listed here ends up in the daemon - so be strict.
+
+# Version control
+.git
+.gitignore
+
+# Python build artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+junit-report.xml
+
+# Lint / security reports
+flake8-report.txt
+bandit-report.json
+pip-freeze.txt
+
+# IDE / editor noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# CI metadata - not needed inside the runtime image
+Jenkinsfile
+README.md

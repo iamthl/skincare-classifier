@@ -1,0 +1,15 @@
+# flake8 configuration - keeps the Jenkins lint stage and local
+# `flake8` runs in agreement on what counts as a violation.
+[flake8]
+max-line-length = 100
+max-complexity = 10
+exclude =
+    .git,
+    .venv,
+    __pycache__,
+    build,
+    dist,
+    htmlcov
+# W503 conflicts with PEP 8's "break before binary operator" guidance
+# and is widely ignored in modern code bases.
+extend-ignore = W503
