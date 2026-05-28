@@ -94,7 +94,7 @@ pipeline {
                     if (isUnix()) {
                         sh '''
                             set -euxo pipefail
-                            python3 -m venv "${VENV_DIR}"
+                            python3 -m venv --copies "${VENV_DIR}"
                             . "${VENV_DIR}/bin/activate"
                             python -m pip install --upgrade pip
                             pip install -r requirements.txt
