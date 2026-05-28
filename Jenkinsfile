@@ -37,10 +37,9 @@ pipeline {
         timeout(time: 20, unit: 'MINUTES')
         // Retain only the most recent runs to keep disk usage bounded.
         buildDiscarder(logRotator(numToKeepStr: '15', artifactNumToKeepStr: '5'))
-        // Surface ANSI colour in the console log for readable test output.
-        ansiColor('xterm')
         // Add timestamps to every console line - invaluable when diagnosing
-        // long-running stages.
+        // long-running stages. (AnsiColor was removed: purely cosmetic and
+        // adds a fragile external-mirror plugin dependency.)
         timestamps()
         // Abort previously-running builds when a new commit lands on the same
         // branch; nobody benefits from CI on stale code.
