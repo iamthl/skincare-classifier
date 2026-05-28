@@ -50,8 +50,6 @@ pipeline {
     // Environment - centralised so stages can reference rather than duplicate.
     // -------------------------------------------------------------------------
     environment {
-        // Project-local virtualenv keeps each build hermetic.
-        VENV_DIR        = "${env.WORKSPACE}/.venv"
         // Quality thresholds enforced by the pipeline (single source of truth).
         COVERAGE_MIN    = '95'
         // Docker image coordinates - SHA tag gives every build a unique,
@@ -94,19 +92,20 @@ pipeline {
                     if (isUnix()) {
                         sh '''
                             set -euxo pipefail
-                            python3 -m venv --copies "${VENV_DIR}"
-                            . "${VENV_DIR}/bin/activate"
-                            python -m pip install --upgrade pip
-                            pip install -r requirements.txt
-                            pip freeze > pip-freeze.txt
+                            # Install directly to user site-packages.
+                            # venv is avoided because python3-venv behaves
+                            # inconsistently across Debian Bookworm Jenkins
+                            # images; the workspace is already isolated per
+                            # build so user-scoped installs are safe here.
+                            python3 -m pip install --user --upgrade pip
+                            python3 -m pip install --user -r requirements.txt
+                            python3 -m pip freeze > pip-freeze.txt
                         '''
                     } else {
                         bat '''
-                            python -m venv %VENV_DIR%
-                            call %VENV_DIR%\\Scripts\\activate
-                            python -m pip install --upgrade pip
-                            pip install -r requirements.txt
-                            pip freeze > pip-freeze.txt
+                            python -m pip install --user --upgrade pip
+                            python -m pip install --user -r requirements.txt
+                            python -m pip freeze > pip-freeze.txt
                         '''
                     }
                 }
@@ -136,12 +135,7 @@ pipeline {
                             if (isUnix()) {
                                 sh '''
                                     set -euxo pipefail
-                                    . "${VENV_DIR}/bin/activate"
-                                    # Two-pass strategy:
-                                    #  1) Hard fail on actual errors (E9, F63, F7, F82).
-                                    #  2) Warn-only pass for style nits (exit-zero) so
-                                    #     stylistic findings don't block the pipeline
-                                    #     - they are still surfaced in the report.
+                                    export PATH="${HOME}/.local/bin:${PATH}"
                                     flake8 src tests --count --select=E9,F63,F7,F82 \
                                            --show-source --statistics
                                     flake8 src tests --count --max-complexity=10 \
@@ -151,7 +145,6 @@ pipeline {
                                 '''
                             } else {
                                 bat '''
-                                    call %VENV_DIR%\\Scripts\\activate
                                     flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics || exit /b 1
                                     flake8 src tests --count --max-complexity=10 --max-line-length=100 --statistics --tee --output-file=flake8-report.txt --exit-zero
                                 '''
@@ -173,15 +166,12 @@ pipeline {
                             if (isUnix()) {
                                 sh '''
                                     set -euxo pipefail
-                                    . "${VENV_DIR}/bin/activate"
-                                    # JSON output for downstream tooling.
+                                    export PATH="${HOME}/.local/bin:${PATH}"
                                     bandit -r src -f json -o bandit-report.json
-                                    # Human-readable summary in the console log.
                                     bandit -r src
                                 '''
                             } else {
                                 bat '''
-                                    call %VENV_DIR%\\Scripts\\activate
                                     bandit -r src -f json -o bandit-report.json || exit /b 1
                                     bandit -r src
                                 '''
@@ -203,7 +193,7 @@ pipeline {
                             if (isUnix()) {
                                 sh """
                                     set -euxo pipefail
-                                    . "\${VENV_DIR}/bin/activate"
+                                    export PATH="\${HOME}/.local/bin:\${PATH}"
                                     pytest \\
                                         --maxfail=1 \\
                                         --strict-markers \\
