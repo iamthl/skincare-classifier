@@ -21,9 +21,11 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Create a persistent venv at build time so PEP 668 never blocks the
-# pipeline. The venv is owned by jenkins so no sudo is needed at runtime.
+# pipeline. Ownership is given to the jenkins user so pip install works
+# at pipeline runtime without sudo.
 RUN python3 -m venv /opt/pyenv \
- && /opt/pyenv/bin/pip install --upgrade pip
+ && /opt/pyenv/bin/pip install --upgrade pip \
+ && chown -R jenkins:jenkins /opt/pyenv
 
 # Make the venv's bin directory first on PATH for the jenkins user.
 ENV PATH="/opt/pyenv/bin:${PATH}"
