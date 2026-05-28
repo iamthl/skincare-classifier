@@ -20,4 +20,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends docker-ce-cli \
  && rm -rf /var/lib/apt/lists/*
 
+# Create a persistent venv at build time so PEP 668 never blocks the
+# pipeline. The venv is owned by jenkins so no sudo is needed at runtime.
+RUN python3 -m venv /opt/pyenv \
+ && /opt/pyenv/bin/pip install --upgrade pip
+
+# Make the venv's bin directory first on PATH for the jenkins user.
+ENV PATH="/opt/pyenv/bin:${PATH}"
+
 USER jenkins

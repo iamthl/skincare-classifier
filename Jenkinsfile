@@ -92,19 +92,16 @@ pipeline {
                     if (isUnix()) {
                         sh '''
                             set -euxo pipefail
-                            # Install directly to user site-packages.
-                            # venv is avoided because python3-venv behaves
-                            # inconsistently across Debian Bookworm Jenkins
-                            # images; the workspace is already isolated per
-                            # build so user-scoped installs are safe here.
-                            python3 -m pip install --user --upgrade pip
-                            python3 -m pip install --user -r requirements.txt
-                            python3 -m pip freeze > pip-freeze.txt
+                            # /opt/pyenv is a venv baked into the jenkins-py:lts
+                            # image at build time, so PEP 668 never blocks us.
+                            pip install --upgrade pip
+                            pip install -r requirements.txt
+                            pip freeze > pip-freeze.txt
                         '''
                     } else {
                         bat '''
-                            python -m pip install --user --upgrade pip
-                            python -m pip install --user -r requirements.txt
+                            python -m pip install --upgrade pip
+                            python -m pip install -r requirements.txt
                             python -m pip freeze > pip-freeze.txt
                         '''
                     }
@@ -135,7 +132,6 @@ pipeline {
                             if (isUnix()) {
                                 sh '''
                                     set -euxo pipefail
-                                    export PATH="${HOME}/.local/bin:${PATH}"
                                     flake8 src tests --count --select=E9,F63,F7,F82 \
                                            --show-source --statistics
                                     flake8 src tests --count --max-complexity=10 \
@@ -166,7 +162,6 @@ pipeline {
                             if (isUnix()) {
                                 sh '''
                                     set -euxo pipefail
-                                    export PATH="${HOME}/.local/bin:${PATH}"
                                     bandit -r src -f json -o bandit-report.json
                                     bandit -r src
                                 '''
@@ -193,7 +188,6 @@ pipeline {
                             if (isUnix()) {
                                 sh """
                                     set -euxo pipefail
-                                    export PATH="\${HOME}/.local/bin:\${PATH}"
                                     pytest \\
                                         --maxfail=1 \\
                                         --strict-markers \\
