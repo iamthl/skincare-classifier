@@ -25,7 +25,9 @@ RUN apt-get update \
 # at pipeline runtime without sudo.
 RUN python3 -m venv /opt/pyenv \
  && /opt/pyenv/bin/pip install --upgrade pip \
- && chown -R jenkins:jenkins /opt/pyenv
+ && chown -R jenkins:jenkins /opt/pyenv \
+ && groupadd -f docker \
+ && usermod -aG docker jenkins
 
 # Make the venv's bin directory first on PATH for the jenkins user.
 ENV PATH="/opt/pyenv/bin:${PATH}"
