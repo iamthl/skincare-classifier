@@ -12,9 +12,10 @@
 #  * Non-root user ("appuser") - the container does not run as root, which
 #    is one of the highest-impact container hardening practices.
 #  * No interactive shells, no apt cache, no .pyc clutter.
-#  * HEALTHCHECK so orchestrators can detect a broken image at runtime.
-#  * Clear, minimal entrypoint that prints a sample routine - this proves
-#    the image is functional in CI smoke tests.
+#  * HEALTHCHECK hits the live HTTP API so orchestrators can detect a
+#    broken process (not just a broken import) at runtime.
+#  * Default CMD starts the Flask HTTP API via the production-grade
+#    waitress WSGI server (Flask's dev server is rejected for prod).
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -48,8 +49,11 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Copy only the requirements first so Docker can cache the layer when the
 # application code (but not the dependency list) changes.
 COPY requirements.txt ./
+# ``waitress`` is the production WSGI server we use in the runtime CMD;
+# pinning it here keeps the dependency set fully reproducible.
 RUN pip install --upgrade pip \
- && pip install -r requirements.txt
+ && pip install -r requirements.txt \
+ && pip install waitress==3.0.0
 
 
 # -----------------------------------------------------------------------------
@@ -61,12 +65,16 @@ FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
-    PYTHONPATH="/app"
+    PYTHONPATH="/app" \
+    PORT=8000
 
-# Apply security updates to the base image. apt lists are removed in the
-# same RUN to avoid bloating the final layer.
+# Apply security updates to the base image and install curl (needed by
+# the HEALTHCHECK below; ~60 KB extra, well worth the operational
+# benefit of a real HTTP probe). apt lists are removed in the same RUN
+# to avoid bloating the final layer.
 RUN apt-get update \
  && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group. Running as root inside a container is a
@@ -83,22 +91,22 @@ WORKDIR /app
 # Copy source last so application changes don't invalidate the deps layer.
 # Ownership is set in a single COPY for efficiency.
 COPY --chown=appuser:appgroup src/ ./src/
-COPY --chown=appuser:appgroup tests/ ./tests/
 
 # Drop privileges. Anything below this line runs as appuser.
 USER appuser
 
-# Healthcheck: a successful import proves the package + venv are wired up.
-# Orchestrators (k8s, ECS, Docker Swarm) will surface failures here as
-# unhealthy containers instead of silently broken ones.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD python -c "import src.component" || exit 1
+EXPOSE 8000
 
-# Default command prints a small, deterministic demo routine so that the CI
-# pipeline can smoke-test the image with a simple `docker run`.
-CMD ["python", "-c", "from src.component import recommend_skincare_routine; \
-import json; \
-print(json.dumps(recommend_skincare_routine({\
-'skin_type':'combination','age':27,'concerns':['acne','dullness'],\
-'climate':'temperate','budget':'medium','routine_preference':'balanced',\
-'sensitivities':[]}), indent=2))"]
+# Healthcheck hits the running HTTP service rather than just re-importing
+# the module: this detects 'process crashed', 'port not bound' and
+# 'route registration broken' - none of which the old import-only check
+# would have caught.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:${PORT}/health \
+        || exit 1
+
+# Default command: serve the Flask app via waitress, a production WSGI
+# server. Flask's built-in dev server explicitly warns against
+# production use; using waitress here means the image is genuinely
+# production-deployable, not just demo-deployable.
+CMD ["sh", "-c", "waitress-serve --host=0.0.0.0 --port=${PORT} src.api:app"]
