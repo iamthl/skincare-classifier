@@ -349,23 +349,29 @@ pipeline {
                         sh """
                             set -euxo pipefail
                             docker rm -f ${container} >/dev/null 2>&1 || true
-                            # Map an ephemeral host port and detach so the
-                            # container runs in the background while we probe it.
-                            docker run -d --name ${container} -p 18080:8000 ${fullName}
+                            # No port mapping: Jenkins runs inside Docker, so -p binds
+                            # on the host, not on Jenkins's 127.0.0.1. Instead, start
+                            # the container on the default bridge and reach it via its
+                            # internal IP (both containers share the same bridge).
+                            docker run -d --name ${container} ${fullName}
+
+                            # Resolve the container's bridge IP.
+                            CONTAINER_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${container})
+                            echo "Smoke container IP: \${CONTAINER_IP}"
 
                             # Wait up to 20 seconds for the healthcheck endpoint.
                             healthy=0
                             for i in \$(seq 1 20); do
-                                if curl -fsS http://127.0.0.1:18080/health > /dev/null; then
+                                if curl -fsS http://\${CONTAINER_IP}:8000/health > /dev/null; then
                                     echo "container healthy after \${i}s"
                                     healthy=1; break
                                 fi
                                 sleep 1
                             done
-                            [ "\${healthy}" -eq 1 ] || { echo "Container failed to start within 20s"; exit 1; }
+                            [ "\${healthy}" -eq 1 ] || { echo "Container failed to start within 20s"; docker logs ${container}; exit 1; }
 
                             # Verify /recommend returns a structurally valid response.
-                            curl -fsS -X POST http://127.0.0.1:18080/recommend \\
+                            curl -fsS -X POST http://\${CONTAINER_IP}:8000/recommend \\
                                 -H 'Content-Type: application/json' \\
                                 -d '{"skin_type":"oily","age":25,"concerns":["acne"],"climate":"humid","budget":"medium","routine_preference":"balanced","sensitivities":[]}' \\
                                 | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); assert "morning_routine" in d, d'
@@ -494,18 +500,18 @@ def simulateDeploy(String envName, String image) {
             set -euxo pipefail
             echo "==> Deploying ${image} to '${envName}' environment"
             container="skincare-${envName}-${env.BUILD_NUMBER}"
-            port=\$((18080 + RANDOM % 100))
             docker rm -f "\$container" >/dev/null 2>&1 || true
-            docker run -d --name "\$container" -e APP_ENV=${envName} -p \$port:8000 ${image}
+            docker run -d --name "\$container" -e APP_ENV=${envName} ${image}
+            CONTAINER_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\$container")
             healthy=0
             for i in \$(seq 1 20); do
-                if curl -fsS http://127.0.0.1:\$port/health > /dev/null; then
+                if curl -fsS http://\${CONTAINER_IP}:8000/health > /dev/null; then
                     healthy=1; break
                 fi
                 sleep 1
             done
-            [ "\${healthy}" -eq 1 ] || { echo "Deploy to ${envName} failed health check within 20s"; exit 1; }
-            curl -fsS http://127.0.0.1:\$port/version | python3 -m json.tool
+            [ "\${healthy}" -eq 1 ] || { echo "Deploy to ${envName} failed health check within 20s"; docker logs "\$container"; exit 1; }
+            curl -fsS http://\${CONTAINER_IP}:8000/version | python3 -m json.tool
             echo "==> '${envName}' deployment healthy"
             docker rm -f "\$container"
         """
