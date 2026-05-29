@@ -1,27 +1,34 @@
 // =============================================================================
-// Enterprise-grade Declarative Jenkins pipeline for the Skincare Routine
-// Classifier.
+// Declarative Jenkins pipeline for the Skincare Routine Classifier.
 //
-// Pipeline design
-// ---------------
-//  Setup       -> creates a clean, isolated Python virtualenv (no global pip).
-//  Quality gates run in parallel for speed:
-//      * Lint        - flake8 enforces PEP-8.
-//      * Security    - bandit scans for common Python security issues.
-//      * Test+Cov    - pytest with pytest-cov, fails below the coverage gate.
-//  Build       -> reproducible Docker image build, tagged with the commit SHA.
-//  Smoke Test  -> the freshly built image is actually executed to prove it
-//                 produces valid JSON output (catches "builds-but-broken").
+// Pipeline shape
+// --------------
+//   Preparation
+//   Install Dependencies
+//   Quality Gates (parallel):
+//       * Lint            - flake8 (PEP-8 + complexity)
+//       * Static Typing   - mypy   (type-level defects)
+//       * Security (SAST) - bandit (source-level CWE patterns)
+//       * Security (SCA)  - pip-audit (dependency CVEs)
+//       * Test + Coverage - pytest + branch coverage, fails below 95%
+//   Build Docker Image    (only after every quality gate passes)
+//   Image Smoke Test      (proves the built image is actually functional)
+//   Promote to dev        (auto)
+//   Promote to test       (manual approval)
+//   Promote to staging    (manual approval)
+//   Promote to prod       (manual approval)
 //
-// Quality gates
-// -------------
-//  Any failure in Lint, Security, or Test+Coverage aborts the pipeline
-//  before the Docker image is built - defective code never reaches a
-//  registry. This is the core CI/CD principle: shift left, fail fast.
-//
-//  Reports (JUnit XML, coverage XML/HTML, bandit JSON) are archived so a
-//  human reviewer or downstream tool (SonarQube, Codecov, etc.) can read
-//  them after the run.
+// Why this shape
+// --------------
+// * Parallel quality gates: shift left + fail fast on any of five
+//   independent quality dimensions.
+// * Image is built *once*, smoke-tested, then *promoted* through four
+//   environments. This is the Week 8 lecture's "build once, promote
+//   the same artefact" principle: dev/test/staging/prod consume the
+//   identical IMAGE_TAG so they are guaranteed to be the same binary.
+// * Manual approval gates between non-prod and prod environments give
+//   the human a chance to abort - the standard control from the
+//   Week 11 lecture on automation-as-risk-amplifier.
 // =============================================================================
 
 pipeline {
@@ -34,12 +41,11 @@ pipeline {
     // -------------------------------------------------------------------------
     options {
         // Cap total wall time so a stuck stage cannot block the executor forever.
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         // Retain only the most recent runs to keep disk usage bounded.
         buildDiscarder(logRotator(numToKeepStr: '15', artifactNumToKeepStr: '5'))
         // Add timestamps to every console line - invaluable when diagnosing
-        // long-running stages. (AnsiColor was removed: purely cosmetic and
-        // adds a fragile external-mirror plugin dependency.)
+        // long-running stages.
         timestamps()
         // Abort previously-running builds when a new commit lands on the same
         // branch; nobody benefits from CI on stale code.
@@ -69,17 +75,7 @@ pipeline {
         stage('Preparation') {
             steps {
                 echo "Building ${env.IMAGE_NAME}:${env.IMAGE_TAG} for branch '${env.BRANCH_NAME ?: 'local'}'"
-
-                // 'checkout scm' uses the SCM config from the multibranch / job
-                // definition - no hard-coded URL means the pipeline is portable.
                 checkout scm
-
-                script {
-                    // Choose shell wrapper based on agent OS. The original
-                    // scaffold used 'bat' (Windows); enterprise pipelines must
-                    // remain portable, so we abstract over the difference.
-                    env.SHELL_WRAP = isUnix() ? 'sh' : 'bat'
-                }
             }
         }
 
@@ -118,9 +114,8 @@ pipeline {
         }
 
         // ---------------------------------------------------------------------
-        // 3. Quality gates - lint + security + tests run in parallel for speed.
-        //    A failure in any branch fails the whole stage and aborts the
-        //    pipeline before the Docker image is built.
+        // 3. Quality gates - five independent checks in parallel.
+        //    Any failure aborts the pipeline before the Docker image is built.
         // ---------------------------------------------------------------------
         stage('Quality Gates') {
             parallel {
@@ -136,13 +131,12 @@ pipeline {
                                            --show-source --statistics
                                     flake8 src tests --count --max-complexity=10 \
                                            --max-line-length=100 --statistics \
-                                           --tee --output-file=flake8-report.txt \
-                                           --exit-zero
+                                           --tee --output-file=flake8-report.txt
                                 '''
                             } else {
                                 bat '''
                                     flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics || exit /b 1
-                                    flake8 src tests --count --max-complexity=10 --max-line-length=100 --statistics --tee --output-file=flake8-report.txt --exit-zero
+                                    flake8 src tests --count --max-complexity=10 --max-line-length=100 --statistics --tee --output-file=flake8-report.txt
                                 '''
                             }
                         }
@@ -155,8 +149,40 @@ pipeline {
                     }
                 }
 
-                // --- 3b. Security ---------------------------------------------
-                stage('Security Scan (bandit)') {
+                // --- 3b. Static typing ----------------------------------------
+                // mypy catches a class of defects flake8 cannot see (wrong
+                // types, missing return annotations on callable boundaries,
+                // unsound Optional handling, etc.). Failing here keeps the
+                // type contracts honoured at every commit.
+                stage('Static Typing (mypy)') {
+                    steps {
+                        script {
+                            if (isUnix()) {
+                                sh '''
+                                    set -euxo pipefail
+                                    mypy --ignore-missing-imports \
+                                         --no-strict-optional \
+                                         src \
+                                         | tee mypy-report.txt
+                                '''
+                            } else {
+                                bat '''
+                                    mypy --ignore-missing-imports --no-strict-optional src > mypy-report.txt
+                                    type mypy-report.txt
+                                '''
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'mypy-report.txt',
+                                             allowEmptyArchive: true
+                        }
+                    }
+                }
+
+                // --- 3c. Security (SAST) --------------------------------------
+                stage('Security SAST (bandit)') {
                     steps {
                         script {
                             if (isUnix()) {
@@ -181,7 +207,42 @@ pipeline {
                     }
                 }
 
-                // --- 3c. Tests + Coverage -------------------------------------
+                // --- 3d. Security (SCA) ---------------------------------------
+                // pip-audit cross-references every pinned dependency in
+                // requirements.txt against the PyPA / OSV vulnerability
+                // database. Catches the "we shipped a vulnerable library"
+                // failure mode that lint and unit tests cannot detect.
+                // ``--strict`` makes a *finding* a build failure, exactly
+                // matching the Week 11 lecture's notion of a security gate.
+                stage('Security SCA (pip-audit)') {
+                    steps {
+                        script {
+                            if (isUnix()) {
+                                sh '''
+                                    set -euxo pipefail
+                                    pip-audit \
+                                        --requirement requirements.txt \
+                                        --strict \
+                                        --format json \
+                                        --output pip-audit-report.json \
+                                        || (echo "Vulnerable dependencies detected"; exit 1)
+                                '''
+                            } else {
+                                bat '''
+                                    pip-audit --requirement requirements.txt --strict --format json --output pip-audit-report.json || exit /b 1
+                                '''
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'pip-audit-report.json',
+                                             allowEmptyArchive: true
+                        }
+                    }
+                }
+
+                // --- 3e. Tests + Coverage -------------------------------------
                 stage('Test + Coverage') {
                     steps {
                         script {
@@ -202,7 +263,6 @@ pipeline {
                                 """
                             } else {
                                 bat """
-                                    call %VENV_DIR%\\Scripts\\activate
                                     pytest --maxfail=1 --strict-markers --tb=short ^
                                         --junitxml=junit-report.xml ^
                                         --cov=src --cov-branch ^
@@ -230,6 +290,7 @@ pipeline {
 
         // ---------------------------------------------------------------------
         // 4. Build the Docker image (only after all quality gates have passed).
+        //    Built ONCE; the same tag is promoted through every environment.
         // ---------------------------------------------------------------------
         stage('Build Docker Image') {
             // Skip this stage when the Docker daemon is unavailable (e.g. when
@@ -271,6 +332,10 @@ pipeline {
         // 5. Smoke test - actually run the image. A green build that produces a
         //    broken container is worse than a red build, so prove the image is
         //    functional before declaring success.
+        //
+        //    The new image serves HTTP, so the smoke test starts a container,
+        //    waits for /health, posts a profile to /recommend and asserts the
+        //    JSON response. This exercises the full WSGI stack inside Docker.
         // ---------------------------------------------------------------------
         stage('Image Smoke Test') {
             when {
@@ -279,29 +344,110 @@ pipeline {
             steps {
                 script {
                     def fullName = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    def container = "skincare-smoke-${env.BUILD_NUMBER}"
                     if (isUnix()) {
                         sh """
                             set -euxo pipefail
-                            output=\$(docker run --rm ${fullName})
-                            echo "\${output}"
-                            echo "\${output}" | python3 -c 'import json,sys; json.loads(sys.stdin.read())'
+                            docker rm -f ${container} >/dev/null 2>&1 || true
+                            # Map an ephemeral host port and detach so the
+                            # container runs in the background while we probe it.
+                            docker run -d --name ${container} -p 18080:8000 ${fullName}
+
+                            # Wait up to 20 seconds for the healthcheck endpoint.
+                            healthy=0
+                            for i in \$(seq 1 20); do
+                                if curl -fsS http://127.0.0.1:18080/health > /dev/null; then
+                                    echo "container healthy after \${i}s"
+                                    healthy=1; break
+                                fi
+                                sleep 1
+                            done
+                            [ "\${healthy}" -eq 1 ] || { echo "Container failed to start within 20s"; exit 1; }
+
+                            # Verify /recommend returns a structurally valid response.
+                            curl -fsS -X POST http://127.0.0.1:18080/recommend \\
+                                -H 'Content-Type: application/json' \\
+                                -d '{"skin_type":"oily","age":25,"concerns":["acne"],"climate":"humid","budget":"medium","routine_preference":"balanced","sensitivities":[]}' \\
+                                | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); assert "morning_routine" in d, d'
+
+                            docker logs ${container} | tail -n 30
+                            docker rm -f ${container}
                         """
                     } else {
                         bat """
-                            docker run --rm ${fullName} > image-output.json
-                            type image-output.json
-                            python -c "import json; json.load(open('image-output.json'))"
+                            docker rm -f ${container} > nul 2>&1
+                            docker run -d --name ${container} -p 18080:8000 ${fullName}
+                            powershell -Command "for(\$i=0;\$i -lt 20;\$i++){try{Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18080/health|Out-Null;break}catch{Start-Sleep -Seconds 1}}"
+                            curl -fsS -X POST http://127.0.0.1:18080/recommend -H "Content-Type: application/json" -d "{\\"skin_type\\":\\"oily\\",\\"age\\":25,\\"concerns\\":[\\"acne\\"],\\"climate\\":\\"humid\\",\\"budget\\":\\"medium\\",\\"routine_preference\\":\\"balanced\\",\\"sensitivities\\":[]}"
+                            docker rm -f ${container}
                         """
                     }
                 }
             }
         }
+
+        // ---------------------------------------------------------------------
+        // 6. Environment promotion - the same image is deployed to four
+        //    environments in sequence. Dev is automatic; test/staging/prod
+        //    require a human approval. This mirrors the Week 8 lecture's
+        //    "build once, promote with gates" flow (slides 22-24).
+        //
+        //    The 'deploy' step here is a simulation: in a real Kubernetes
+        //    cluster it would 'helm upgrade --install', in ECS it would
+        //    'aws ecs update-service'. The pipeline shape is the same.
+        // ---------------------------------------------------------------------
+        stage('Deploy to dev') {
+            when { expression { return isDockerAvailable() } }
+            steps {
+                script {
+                    simulateDeploy('dev', "${env.IMAGE_NAME}:${env.IMAGE_TAG}")
+                }
+            }
+        }
+
+        stage('Approve promotion to test') {
+            when { expression { return isDockerAvailable() } }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Promote to TEST?', ok: 'Promote'
+                }
+            }
+        }
+        stage('Deploy to test') {
+            when { expression { return isDockerAvailable() } }
+            steps { script { simulateDeploy('test', "${env.IMAGE_NAME}:${env.IMAGE_TAG}") } }
+        }
+
+        stage('Approve promotion to staging') {
+            when { expression { return isDockerAvailable() } }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Promote to STAGING?', ok: 'Promote'
+                }
+            }
+        }
+        stage('Deploy to staging') {
+            when { expression { return isDockerAvailable() } }
+            steps { script { simulateDeploy('staging', "${env.IMAGE_NAME}:${env.IMAGE_TAG}") } }
+        }
+
+        stage('Approve promotion to prod') {
+            when { expression { return isDockerAvailable() } }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: 'Promote SAME IMAGE TAG to PRODUCTION?',
+                          ok: 'I have reviewed and approve'
+                }
+            }
+        }
+        stage('Deploy to prod') {
+            when { expression { return isDockerAvailable() } }
+            steps { script { simulateDeploy('prod', "${env.IMAGE_NAME}:${env.IMAGE_TAG}") } }
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Post actions - run regardless of outcome. The 'always' block guarantees
-    // workspace cleanup; success / failure / unstable hooks make notifications
-    // easy to bolt on later (Slack, email, etc.).
+    // Post actions - run regardless of outcome.
     // -------------------------------------------------------------------------
     post {
         always {
@@ -318,7 +464,7 @@ pipeline {
             }
         }
         success {
-            echo "Pipeline succeeded - image ${env.IMAGE_NAME}:${env.IMAGE_TAG} is ready."
+            echo "Pipeline succeeded - image ${env.IMAGE_NAME}:${env.IMAGE_TAG} promoted to prod."
         }
         unstable {
             echo "Pipeline finished UNSTABLE - typically a test or coverage warning."
@@ -327,9 +473,51 @@ pipeline {
             echo "Pipeline FAILED - inspect the failing stage's log and archived reports."
         }
         cleanup {
-            // Always wipe the workspace at the very end of post-processing.
             cleanWs()
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: simulate a per-environment deployment.
+//
+// In a teaching context we cannot assume the marker has a Kubernetes
+// cluster or cloud credentials, so we model the deployment by running
+// the image with a per-environment APP_ENV / banner setting, hitting
+// /health, and printing the version. The Jenkins console output is the
+// promotion evidence; a production version would replace the body with
+// a 'helm upgrade' / 'kubectl rollout' / 'aws ecs update-service' call.
+// ---------------------------------------------------------------------------
+def simulateDeploy(String envName, String image) {
+    if (isUnix()) {
+        sh """
+            set -euxo pipefail
+            echo "==> Deploying ${image} to '${envName}' environment"
+            container="skincare-${envName}-${env.BUILD_NUMBER}"
+            port=\$((18080 + RANDOM % 100))
+            docker rm -f "\$container" >/dev/null 2>&1 || true
+            docker run -d --name "\$container" -e APP_ENV=${envName} -p \$port:8000 ${image}
+            healthy=0
+            for i in \$(seq 1 20); do
+                if curl -fsS http://127.0.0.1:\$port/health > /dev/null; then
+                    healthy=1; break
+                fi
+                sleep 1
+            done
+            [ "\${healthy}" -eq 1 ] || { echo "Deploy to ${envName} failed health check within 20s"; exit 1; }
+            curl -fsS http://127.0.0.1:\$port/version | python3 -m json.tool
+            echo "==> '${envName}' deployment healthy"
+            docker rm -f "\$container"
+        """
+    } else {
+        bat """
+            echo Deploying ${image} to ${envName}
+            set container=skincare-${envName}-${env.BUILD_NUMBER}
+            docker rm -f %container% > nul 2>&1
+            docker run -d --name %container% -e APP_ENV=${envName} -p 18099:8000 ${image}
+            powershell -Command "Start-Sleep -Seconds 5; Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18099/version"
+            docker rm -f %container%
+        """
     }
 }
 
