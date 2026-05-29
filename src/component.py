@@ -226,7 +226,7 @@ def _moisturiser_for(skin_type: str, climate: str) -> str:
     }[skin_type]
     if climate in {"cold", "dry"} and skin_type != "oily":
         return base + " (layered with a facial oil at night)"
-    if climate == "humid" and skin_type in {"dry", "normal"}:
+    if climate == "humid" and skin_type == "dry":
         return base.replace("Rich cream", "Lightweight lotion")
     return base
 
@@ -392,9 +392,9 @@ def _strip_retinoids_for_minors(
         return morning, evening, weekly, []
 
     before = len(morning) + len(evening) + len(weekly)
-    morning = [s for s in morning if "Retinoid" not in s]
-    evening = [s for s in evening if "Retinoid" not in s]
-    weekly = [w for w in weekly if "Retinoid" not in w]
+    morning = [s for s in morning if "retinoid" not in s.lower()]
+    evening = [s for s in evening if "retinoid" not in s.lower()]
+    weekly = [w for w in weekly if "retinoid" not in w.lower()]
     warnings: List[str] = []
     if before != len(morning) + len(evening) + len(weekly):
         warnings.append(
@@ -488,19 +488,32 @@ def recommend_skincare_routine(
     )
 
     morning, evening = _apply_minimal_preference(morning, evening, preference)
+    if preference == "minimal" and "aging" in concerns and age_band != "teen":
+        notes.append(
+            "Anti-aging steps (retinoids) are excluded by the 'minimal' routine "
+            "preference; choose 'balanced' or 'comprehensive' to include them."
+        )
 
     morning, evening, weekly, minor_warnings = _strip_retinoids_for_minors(
         morning, evening, weekly, age_band
     )
     warnings: List[str] = list(minor_warnings)
 
-    morning, w1 = _filter_against_sensitivities(morning, sensitivities)
+    if morning and "SPF" in morning[-1]:
+        spf_step = morning[-1]
+        morning_body, w1 = _filter_against_sensitivities(morning[:-1], sensitivities)
+        morning = morning_body + [spf_step]
+    else:
+        morning, w1 = _filter_against_sensitivities(morning, sensitivities)
     evening, w2 = _filter_against_sensitivities(evening, sensitivities)
     weekly, w3 = _filter_against_sensitivities(weekly, sensitivities)
     warnings.extend(w1 + w2 + w3)
 
     # Inform about unrecognised sensitivities so the user can double-check.
-    unknown_sens = [s for s in sensitivities if s not in KNOWN_SENSITIVITIES]
+    unknown_sens = [
+        s for s in sensitivities
+        if s.lower().replace(" ", "_") not in KNOWN_SENSITIVITIES
+    ]
     if unknown_sens:
         notes.append(
             f"Custom sensitivities recorded but not in the known list: "

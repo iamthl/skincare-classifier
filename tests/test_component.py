@@ -263,6 +263,15 @@ class TestPreferenceRules:
         # Minimal evening must not contain serums.
         assert len(result["evening_routine"]) <= 2
 
+    def test_minimal_with_aging_concern_adds_note(self, baseline_profile):
+        """When 'minimal' preference silently omits retinoids, the user must
+        be informed via a note so they can choose a fuller routine."""
+        baseline_profile["age"] = 35
+        baseline_profile["concerns"] = ["aging"]
+        baseline_profile["routine_preference"] = "minimal"
+        result = recommend_skincare_routine(baseline_profile)
+        assert any("retinoid" in n.lower() for n in result["notes"])
+
     def test_balanced_includes_double_cleanse(self, baseline_profile):
         baseline_profile["routine_preference"] = "balanced"
         result = recommend_skincare_routine(baseline_profile)
@@ -331,6 +340,24 @@ class TestSensitivities:
         assert any(
             "milk cleanser" in s.lower() for s in result["morning_routine"]
         )
+
+    def test_spf_preserved_despite_sunscreen_sensitivity(self, baseline_profile):
+        """SPF is non-negotiable and must not be removed even if the user
+        declares 'sunscreen' as a sensitivity."""
+        baseline_profile["sensitivities"] = ["sunscreen"]
+        result = recommend_skincare_routine(baseline_profile)
+        assert any("SPF" in s for s in result["morning_routine"])
+        assert "SPF" in result["morning_routine"][-1]
+
+    def test_known_sensitivity_in_uppercase_not_flagged_as_unknown(
+        self, baseline_profile
+    ):
+        """A known sensitivity submitted in uppercase must be recognised and
+        must not generate a misleading 'custom sensitivity' note."""
+        baseline_profile["concerns"] = ["acne"]
+        baseline_profile["sensitivities"] = ["SALICYLIC_ACID"]
+        result = recommend_skincare_routine(baseline_profile)
+        assert all("Custom sensitivities" not in n for n in result["notes"])
 
 
 # ---------------------------------------------------------------------------
