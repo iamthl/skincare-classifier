@@ -80,13 +80,16 @@ def _register_routes(app: Flask) -> None:
     def version() -> Tuple[Response, int]:
         """Build-traceability endpoint.
 
-        Surfaces both the application version and (when supplied via the
-        environment by the CI pipeline) the git commit SHA - so that an
-        operator can correlate a running container with a specific build.
+        Surfaces the application version, the git commit SHA, and the
+        target environment so that an operator can correlate a running
+        container with a specific build *and* confirm which environment
+        it was promoted to. ``APP_ENV`` is injected by ``simulateDeploy``
+        in the Jenkinsfile (``-e APP_ENV=dev/test/staging/prod``).
         """
         return jsonify({
             "version": API_VERSION,
             "git_commit": os.environ.get("GIT_COMMIT", "unknown"),
+            "environment": os.environ.get("APP_ENV", "unknown"),
         }), 200
 
     @app.post("/recommend")

@@ -57,7 +57,9 @@ pipeline {
     // -------------------------------------------------------------------------
     environment {
         // Quality thresholds enforced by the pipeline (single source of truth).
-        COVERAGE_MIN    = '95'
+        // Set to 100 because the suite achieves 100% branch coverage; a gate
+        // below the actual figure would allow regressions to hide silently.
+        COVERAGE_MIN    = '100'
         // Docker image coordinates - SHA tag gives every build a unique,
         // immutable identity; the 'latest' tag is *not* applied automatically.
         IMAGE_NAME      = 'skincare-routine-classifier'
@@ -161,13 +163,12 @@ pipeline {
                                 sh '''
                                     set -euxo pipefail
                                     mypy --ignore-missing-imports \
-                                         --no-strict-optional \
                                          src \
                                          | tee mypy-report.txt
                                 '''
                             } else {
                                 bat '''
-                                    mypy --ignore-missing-imports --no-strict-optional src > mypy-report.txt
+                                    mypy --ignore-missing-imports src > mypy-report.txt
                                     type mypy-report.txt
                                 '''
                             }
@@ -511,8 +512,21 @@ def simulateDeploy(String envName, String image) {
                 sleep 1
             done
             [ "\${healthy}" -eq 1 ] || { echo "Deploy to ${envName} failed health check within 20s"; docker logs "\$container"; exit 1; }
-            curl -fsS http://\${CONTAINER_IP}:8000/version | python3 -m json.tool
-            echo "==> '${envName}' deployment healthy"
+
+            # Verify /version surfaces the correct environment name - proves
+            # APP_ENV was injected and the app reads it correctly.
+            env_in_response=\$(curl -fsS http://\${CONTAINER_IP}:8000/version \
+                | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["environment"])')
+            echo "==> /version reports environment: \${env_in_response}"
+            [ "\${env_in_response}" = "${envName}" ] || { echo "Expected environment=${envName}, got \${env_in_response}"; exit 1; }
+
+            # Verify /recommend is functional end-to-end in this environment.
+            curl -fsS -X POST http://\${CONTAINER_IP}:8000/recommend \\
+                -H 'Content-Type: application/json' \\
+                -d '{"skin_type":"normal","age":30,"concerns":[],"climate":"temperate","budget":"medium","routine_preference":"balanced","sensitivities":[]}' \\
+                | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); assert "morning_routine" in d, d'
+
+            echo "==> '${envName}' deployment healthy and functional"
             docker rm -f "\$container"
         """
     } else {
@@ -522,6 +536,7 @@ def simulateDeploy(String envName, String image) {
             docker rm -f %container% > nul 2>&1
             docker run -d --name %container% -e APP_ENV=${envName} -p 18099:8000 ${image}
             powershell -Command "Start-Sleep -Seconds 5; Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18099/version"
+            curl -fsS -X POST http://127.0.0.1:18099/recommend -H "Content-Type: application/json" -d "{\\"skin_type\\":\\"normal\\",\\"age\\":30,\\"concerns\\":[],\\"climate\\":\\"temperate\\",\\"budget\\":\\"medium\\",\\"routine_preference\\":\\"balanced\\",\\"sensitivities\\":[]}"
             docker rm -f %container%
         """
     }

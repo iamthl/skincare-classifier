@@ -249,6 +249,20 @@ class TestClimateRules:
             "facial oil" in s.lower() for s in result["morning_routine"]
         )
 
+    def test_humid_climate_lightens_moisturiser_for_dry_skin(
+        self, baseline_profile
+    ):
+        """dry skin + humid climate is the only combination that triggers
+        the Rich-cream → Lightweight-lotion substitution rule in
+        ``_moisturiser_for``. Without this test that branch was never taken."""
+        baseline_profile["skin_type"] = "dry"
+        baseline_profile["climate"] = "humid"
+        result = recommend_skincare_routine(baseline_profile)
+        # The rich cream should have been substituted with a lighter option.
+        assert all("Rich cream" not in s for s in result["morning_routine"])
+        # A lotion variant must appear in its place.
+        assert any("lotion" in s.lower() for s in result["morning_routine"])
+
 
 # ---------------------------------------------------------------------------
 # Preference rules

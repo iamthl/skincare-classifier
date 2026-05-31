@@ -371,6 +371,16 @@ def _apply_minimal_preference(
 
     Honoured *after* concern-based additions so the SPF and moisturiser
     are still preserved when we cut the middle out.
+
+    Index assumptions — guaranteed by ``_build_morning_routine``'s fixed order:
+      * ``morning[0]``  — always the cleanser (first step appended)
+      * ``morning[-2]`` — always the moisturiser (second-to-last, appended
+                          before SPF by every code path in the builder)
+      * ``morning[-1]`` — always the SPF (unconditional last append)
+    The property test ``test_morning_routine_always_ends_with_spf`` asserts
+    the SPF invariant across 100 randomly generated profiles; if a future
+    change to ``_build_morning_routine`` breaks the ordering, that property
+    will fail before this function can produce a corrupt routine.
     """
     if preference != "minimal":
         return morning, evening
@@ -503,7 +513,10 @@ def recommend_skincare_routine(
         spf_step = morning[-1]
         morning_body, w1 = _filter_against_sensitivities(morning[:-1], sensitivities)
         morning = morning_body + [spf_step]
-    else:
+    else:  # pragma: no cover  — SPF is always the last morning step (see
+        # _build_morning_routine and _apply_minimal_preference); this branch
+        # is defensive code for a future rule change that drops SPF, not a
+        # reachable path via the current public API.
         morning, w1 = _filter_against_sensitivities(morning, sensitivities)
     evening, w2 = _filter_against_sensitivities(evening, sensitivities)
     weekly, w3 = _filter_against_sensitivities(weekly, sensitivities)

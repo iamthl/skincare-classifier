@@ -9,6 +9,7 @@ so the assertions are realistic without the test suite needing a port.
 from __future__ import annotations
 
 from typing import Any, Dict
+from unittest.mock import patch
 
 import pytest
 
@@ -53,9 +54,31 @@ class TestVersionEndpoint:
         assert response.status_code == 200
         body = response.get_json()
         assert body["version"] == API_VERSION
-        # When the pipeline doesn't inject GIT_COMMIT, the API should
-        # still respond - 'unknown' is a stable sentinel for parsers.
+        # When the pipeline doesn't inject GIT_COMMIT or APP_ENV, the API
+        # must still respond — 'unknown' is a stable sentinel for parsers.
         assert "git_commit" in body
+        assert "environment" in body
+
+    def test_environment_field_reflects_app_env_variable(self):
+        """APP_ENV is injected by simulateDeploy (-e APP_ENV=dev/test/staging/prod).
+
+        The /version endpoint must surface it so that an operator can
+        confirm which environment a running container was promoted to
+        without having to inspect docker inspect or the orchestrator.
+        """
+        import os
+        os.environ["APP_ENV"] = "staging"
+        try:
+            # Create a fresh app so the env var is read at request time,
+            # not at import time (os.environ is global state).
+            app = create_app({"TESTING": True})
+            response = app.test_client().get("/version")
+            body = response.get_json()
+            assert body["environment"] == "staging"
+        finally:
+            # Always restore the process environment so other tests
+            # running in the same process are unaffected.
+            del os.environ["APP_ENV"]
 
 
 class TestRecommendEndpoint:
@@ -65,6 +88,31 @@ class TestRecommendEndpoint:
         body = response.get_json()
         # We do not duplicate the component-level assertions here;
         # the API only owns the wire contract.
+        assert "morning_routine" in body
+        assert "evening_routine" in body
+
+    def test_returns_routine_without_optional_sensitivities_key(
+        self, client
+    ):
+        """``sensitivities`` is optional in the component; the API must
+        accept a profile that omits it entirely (not just an empty list).
+
+        This proves the wire contract: callers that don't know about
+        sensitivities still get a valid 200 response, not a 400 for a
+        missing field.
+        """
+        profile_without_sensitivities = {
+            "skin_type": "oily",
+            "age": 25,
+            "concerns": ["acne"],
+            "climate": "humid",
+            "budget": "medium",
+            "routine_preference": "balanced",
+            # 'sensitivities' deliberately omitted
+        }
+        response = client.post("/recommend", json=profile_without_sensitivities)
+        assert response.status_code == 200
+        body = response.get_json()
         assert "morning_routine" in body
         assert "evening_routine" in body
 
@@ -116,6 +164,42 @@ class TestUnknownRoutes:
     def test_unknown_route_returns_404(self, client):
         response = client.get("/does-not-exist")
         assert response.status_code == 404
+
+
+class TestInternalServerError:
+    """Verifies the 500 error handler produces a consistent JSON envelope.
+
+    Flask re-raises exceptions in TESTING mode by default, so we must
+    explicitly disable PROPAGATE_EXCEPTIONS to allow the error handler
+    to fire. This test exercises the defensive handler that guards against
+    unexpected bugs in the component layer reaching the HTTP client as an
+    unformatted traceback.
+    """
+
+    def test_unhandled_exception_returns_500_json(self):
+        # PROPAGATE_EXCEPTIONS=False ensures Flask routes unhandled exceptions
+        # through the registered @app.errorhandler(500) rather than re-raising.
+        app = create_app({
+            "TESTING": True,
+            "PROPAGATE_EXCEPTIONS": False,
+        })
+        client = app.test_client()
+        valid_profile = {
+            "skin_type": "oily", "age": 25, "concerns": ["acne"],
+            "climate": "humid", "budget": "medium",
+            "routine_preference": "balanced", "sensitivities": [],
+        }
+        # Patch at the import site inside src.api so Flask's dispatch sees it.
+        with patch(
+            "src.api.recommend_skincare_routine",
+            side_effect=RuntimeError("simulated unexpected failure"),
+        ):
+            response = client.post("/recommend", json=valid_profile)
+        assert response.status_code == 500
+        body = response.get_json()
+        assert body is not None, "500 response must be JSON, not an HTML traceback"
+        assert body["error"] == "internal_error"
+        assert "unexpected" in body["message"].lower()
 
 
 class TestPayloadLimits:

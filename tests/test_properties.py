@@ -138,3 +138,77 @@ def test_warnings_list_is_always_present_and_typed(skin_type, climate):
     result = recommend_skincare_routine(profile)
     assert isinstance(result["warnings"], list)
     assert all(isinstance(w, str) for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Additional invariant properties
+# ---------------------------------------------------------------------------
+
+@st.composite
+def _adult_aging_profile(draw):
+    """Adult profile with aging concern and a non-minimal preference.
+
+    Minimal preference silently omits retinoids and emits a note instead,
+    so we test retinoid inclusion only for balanced/comprehensive.
+    """
+    return {
+        "skin_type": draw(_skin_types),
+        "age": draw(st.integers(min_value=18, max_value=120)),
+        "concerns": ["aging"],
+        "climate": draw(_climates),
+        "budget": draw(_budgets),
+        "routine_preference": draw(st.sampled_from(["balanced", "comprehensive"])),
+        "sensitivities": [],
+    }
+
+
+@given(profile=_adult_aging_profile())
+@settings(max_examples=50, deadline=None)
+def test_aging_concern_always_adds_retinoid_for_adults(profile):
+    """Any adult (18+) with aging concern and a non-minimal preference
+    must always receive a retinoid step in the evening routine.
+
+    This is a core product guarantee: if the retinoid rule is ever
+    accidentally gated or dropped for some skin_type / climate
+    combination, this property fails immediately.
+    """
+    result = recommend_skincare_routine(profile)
+    assert any("Retinoid" in s for s in result["evening_routine"]), (
+        f"Expected retinoid in evening routine for profile {profile}, "
+        f"got: {result['evening_routine']}"
+    )
+
+
+@given(profile=_adult_profile())
+@settings(max_examples=100, deadline=None)
+def test_all_routine_items_are_strings(profile):
+    """Every item in the three routine lists must be a plain string.
+
+    Type integrity: a future change that accidentally appends None or a
+    non-string (e.g. a dict or a list) would break callers silently.
+    This property catches the class of bug example-based tests may miss
+    because it exercises every possible input combination.
+    """
+    result = recommend_skincare_routine(profile)
+    for key in ("morning_routine", "evening_routine", "weekly_treatments"):
+        for item in result[key]:
+            assert isinstance(item, str), (
+                f"{key} contains non-string item {item!r} for profile {profile}"
+            )
+
+
+@given(profile=_adult_profile())
+@settings(max_examples=100, deadline=None)
+def test_minimal_preference_always_empties_weekly_treatments(profile):
+    """The minimal preference must always produce an empty weekly
+    treatments list, regardless of skin type, climate, or concerns.
+
+    ``_build_weekly_treatments`` returns early for 'minimal'; this
+    property asserts that contract holds across the entire input space.
+    """
+    profile["routine_preference"] = "minimal"
+    result = recommend_skincare_routine(profile)
+    assert result["weekly_treatments"] == [], (
+        f"Expected no weekly treatments for minimal preference, "
+        f"got {result['weekly_treatments']} for profile {profile}"
+    )
