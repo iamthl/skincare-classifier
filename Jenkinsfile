@@ -330,6 +330,76 @@ pipeline {
         }
 
         // ---------------------------------------------------------------------
+        // 4b. Container vulnerability scan (Trivy).
+        //     pip-audit covers Python package CVEs; it cannot see CVEs in the
+        //     Debian OS packages inside python:3.11-slim-bookworm. Trivy closes
+        //     that gap by scanning the built image — OS layer + Python
+        //     site-packages — for HIGH and CRITICAL findings.
+        //
+        //     --ignore-unfixed restricts the gate to CVEs that have a released
+        //     fix, avoiding noise from known-but-unpatched base-image issues
+        //     that apt-get upgrade cannot yet resolve.
+        //
+        //     Trivy is pulled as a Docker image on demand so no host
+        //     installation is needed. The JSON report is written back into the
+        //     Jenkins workspace via a bind mount.
+        // ---------------------------------------------------------------------
+        stage('Container Scan (Trivy)') {
+            when {
+                expression { return isDockerAvailable() }
+            }
+            steps {
+                script {
+                    def fullName = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    def ws = env.WORKSPACE
+                    if (isUnix()) {
+                        sh """
+                            set -euxo pipefail
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v "${ws}:/workspace" \\
+                                aquasec/trivy:latest image \\
+                                    --exit-code 1 \\
+                                    --severity HIGH,CRITICAL \\
+                                    --ignore-unfixed \\
+                                    --format json \\
+                                    --output /workspace/trivy-report.json \\
+                                    ${fullName} \\
+                                || (echo "HIGH/CRITICAL CVEs in ${fullName} — see trivy-report.json"; exit 1)
+
+                            # Human-readable summary to the console log.
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                aquasec/trivy:latest image \\
+                                    --severity HIGH,CRITICAL \\
+                                    --ignore-unfixed \\
+                                    ${fullName}
+                        """
+                    } else {
+                        bat """
+                            docker run --rm ^
+                                -v //var/run/docker.sock:/var/run/docker.sock ^
+                                -v "%WORKSPACE%:/workspace" ^
+                                aquasec/trivy:latest image ^
+                                    --exit-code 1 --severity HIGH,CRITICAL ^
+                                    --ignore-unfixed ^
+                                    --format json --output /workspace/trivy-report.json ^
+                                    ${fullName} || exit /b 1
+                        """
+                    }
+                }
+            }
+            post {
+                always {
+                    // Archive even on failure — a red scan leaves a record of
+                    // exactly which CVEs blocked the build.
+                    archiveArtifacts artifacts: 'trivy-report.json',
+                                     allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
         // 5. Smoke test - actually run the image. A green build that produces a
         //    broken container is worse than a red build, so prove the image is
         //    functional before declaring success.
@@ -486,14 +556,33 @@ pipeline {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: simulate a per-environment deployment.
+// Helper: simulate a per-environment deployment with extended post-deploy
+// verification and automatic rollback on sustained health-check failure.
 //
-// In a teaching context we cannot assume the marker has a Kubernetes
-// cluster or cloud credentials, so we model the deployment by running
-// the image with a per-environment APP_ENV / banner setting, hitting
-// /health, and printing the version. The Jenkins console output is the
-// promotion evidence; a production version would replace the body with
-// a 'helm upgrade' / 'kubectl rollout' / 'aws ecs update-service' call.
+// Deployment flow
+// ---------------
+//   1. Record the previous image tag in ${envName}-prev-image.txt so a
+//      rollback has a known target (mirrors what Kubernetes stores as the
+//      previous ReplicaSet, or ECS as the previous task-definition ARN).
+//   2. Start the new container.
+//   3. Initial health check (20 s) — proves the process started and the
+//      port is bound.
+//   4. Functional checks — /version (APP_ENV injection) and /recommend
+//      (end-to-end business logic).
+//   5. Extended post-deploy verification (30 s sustained polling) — detects
+//      regressions that surface only after warmup: memory pressure, slow-
+//      path exceptions, background thread crashes.
+//   6. If step 3 or 5 fails: re-deploy the previous image tag (rollback),
+//      verify the rollback container is healthy, then exit non-zero so the
+//      pipeline is marked FAILED and the team is notified.
+//
+// Production equivalents
+// ----------------------
+//   Rollback body:  kubectl rollout undo deployment/<name>
+//                   aws ecs update-service --task-definition <prev-arn>
+//   Sustained check: a Prometheus alert or a readiness probe window.
+// The pipeline shape and rollback logic are identical; only the deploy/
+// rollback bodies differ between simulated and real environments.
 // ---------------------------------------------------------------------------
 def simulateDeploy(String envName, String image) {
     if (isUnix()) {
@@ -501,33 +590,118 @@ def simulateDeploy(String envName, String image) {
             set -euxo pipefail
             echo "==> Deploying ${image} to '${envName}' environment"
             container="skincare-${envName}-${env.BUILD_NUMBER}"
-            docker rm -f "\$container" >/dev/null 2>&1 || true
-            docker run -d --name "\$container" -e APP_ENV=${envName} ${image}
-            CONTAINER_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\$container")
+
+            # ------------------------------------------------------------------
+            # 1. Track the previous image tag for rollback.
+            # ------------------------------------------------------------------
+            prevFile="${envName}-prev-image.txt"
+            PREV_IMAGE=""
+            if [ -f "\${prevFile}" ]; then
+                PREV_IMAGE=\$(cat "\${prevFile}")
+                echo "==> Previous image recorded for rollback: \${PREV_IMAGE}"
+            fi
+            echo "${image}" > "\${prevFile}"
+
+            # ------------------------------------------------------------------
+            # 2. Start the new container.
+            # ------------------------------------------------------------------
+            docker rm -f "\${container}" >/dev/null 2>&1 || true
+            docker run -d --name "\${container}" -e APP_ENV=${envName} ${image}
+            CONTAINER_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\${container}")
+            echo "==> Container IP: \${CONTAINER_IP}"
+
+            # ------------------------------------------------------------------
+            # 3. Initial health check (20 s).
+            # ------------------------------------------------------------------
             healthy=0
             for i in \$(seq 1 20); do
-                if curl -fsS http://\${CONTAINER_IP}:8000/health > /dev/null; then
+                if curl -fsS http://\${CONTAINER_IP}:8000/health > /dev/null 2>&1; then
                     healthy=1; break
                 fi
                 sleep 1
             done
-            [ "\${healthy}" -eq 1 ] || { echo "Deploy to ${envName} failed health check within 20s"; docker logs "\$container"; exit 1; }
+            if [ "\${healthy}" -eq 0 ]; then
+                echo "==> Initial health check failed after 20 s"
+                docker logs "\${container}"
+                docker rm -f "\${container}" || true
+                if [ -n "\${PREV_IMAGE}" ]; then
+                    echo "==> ROLLBACK: redeploying \${PREV_IMAGE} to ${envName}"
+                    rb="\${container}-rollback"
+                    docker run -d --name "\${rb}" -e APP_ENV=${envName} "\${PREV_IMAGE}"
+                    RB_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\${rb}")
+                    for i in \$(seq 1 20); do
+                        if curl -fsS http://\${RB_IP}:8000/health > /dev/null 2>&1; then
+                            echo "==> Rollback to \${PREV_IMAGE} is healthy"; break
+                        fi
+                        sleep 1
+                    done
+                    docker rm -f "\${rb}" || true
+                fi
+                exit 1
+            fi
 
-            # Verify /version surfaces the correct environment name - proves
-            # APP_ENV was injected and the app reads it correctly.
-            env_in_response=\$(curl -fsS http://\${CONTAINER_IP}:8000/version \
+            # ------------------------------------------------------------------
+            # 4. Functional checks.
+            # ------------------------------------------------------------------
+            env_in_response=\$(curl -fsS http://\${CONTAINER_IP}:8000/version \\
                 | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d["environment"])')
             echo "==> /version reports environment: \${env_in_response}"
-            [ "\${env_in_response}" = "${envName}" ] || { echo "Expected environment=${envName}, got \${env_in_response}"; exit 1; }
+            [ "\${env_in_response}" = "${envName}" ] \\
+                || { echo "Expected environment=${envName}, got \${env_in_response}"; exit 1; }
 
-            # Verify /recommend is functional end-to-end in this environment.
             curl -fsS -X POST http://\${CONTAINER_IP}:8000/recommend \\
                 -H 'Content-Type: application/json' \\
                 -d '{"skin_type":"normal","age":30,"concerns":[],"climate":"temperate","budget":"medium","routine_preference":"balanced","sensitivities":[]}' \\
                 | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); assert "morning_routine" in d, d'
 
-            echo "==> '${envName}' deployment healthy and functional"
-            docker rm -f "\$container"
+            # ------------------------------------------------------------------
+            # 5. Extended post-deploy verification (30 s sustained polling).
+            #    Catches regressions that appear only after the initial warmup:
+            #    memory leaks, slow-path exceptions, background thread crashes.
+            # ------------------------------------------------------------------
+            echo "==> Extended post-deploy verification (30 s)..."
+            degraded=0
+            for i in \$(seq 1 30); do
+                if ! curl -fsS http://\${CONTAINER_IP}:8000/health > /dev/null 2>&1; then
+                    echo "==> Health degraded at second \${i}"
+                    degraded=1; break
+                fi
+                sleep 1
+            done
+
+            # ------------------------------------------------------------------
+            # 6. Rollback on sustained failure.
+            # ------------------------------------------------------------------
+            if [ "\${degraded}" -eq 1 ]; then
+                echo "==> Extended verification FAILED — initiating rollback"
+                docker logs "\${container}" | tail -n 30
+                docker rm -f "\${container}" || true
+                if [ -n "\${PREV_IMAGE}" ]; then
+                    echo "==> ROLLBACK: redeploying \${PREV_IMAGE} to ${envName}"
+                    rb="\${container}-rollback"
+                    docker run -d --name "\${rb}" -e APP_ENV=${envName} "\${PREV_IMAGE}"
+                    RB_IP=\$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "\${rb}")
+                    rb_healthy=0
+                    for i in \$(seq 1 20); do
+                        if curl -fsS http://\${RB_IP}:8000/health > /dev/null 2>&1; then
+                            rb_healthy=1; break
+                        fi
+                        sleep 1
+                    done
+                    if [ "\${rb_healthy}" -eq 1 ]; then
+                        echo "==> Rollback to \${PREV_IMAGE} succeeded — ${envName} is stable"
+                    else
+                        echo "==> WARNING: rollback container also unhealthy; manual intervention required"
+                    fi
+                    docker rm -f "\${rb}" || true
+                else
+                    echo "==> No previous image on record; manual rollback required"
+                fi
+                exit 1   # Pipeline is FAILED even if rollback succeeded.
+            fi
+
+            echo "==> '${envName}' deployment healthy after 30 s sustained verification"
+            docker rm -f "\${container}"
         """
     } else {
         bat """
