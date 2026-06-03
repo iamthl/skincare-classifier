@@ -306,8 +306,11 @@ pipeline {
                     if (isUnix()) {
                         sh """
                             set -euxo pipefail
+                            # --pull omitted: Docker uses the cached base image when
+                            # Docker Hub is unreachable (network blip, rate limit).
+                            # Trivy (stage 4b) independently scans the OS layer for
+                            # CVEs, so omitting --pull does not reduce security.
                             docker build \\
-                                --pull \\
                                 --label "git.commit=${env.GIT_COMMIT ?: 'unknown'}" \\
                                 --label "ci.build=${env.BUILD_NUMBER}" \\
                                 -t ${fullName} \\
@@ -317,7 +320,7 @@ pipeline {
                         """
                     } else {
                         bat """
-                            docker build --pull ^
+                            docker build ^
                                 --label git.commit=${env.GIT_COMMIT} ^
                                 --label ci.build=${env.BUILD_NUMBER} ^
                                 -t ${fullName} ^
