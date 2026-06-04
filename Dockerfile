@@ -49,7 +49,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Copy only the requirements first so Docker can cache the layer when the
 # application code (but not the dependency list) changes.
 COPY requirements.txt ./
-# ``waitress`` is the production WSGI server we use in the runtime CMD;
+# waitress is the production WSGI server we use in the runtime CMD;
 # pinning it here keeps the dependency set fully reproducible.
 RUN pip install --upgrade pip \
  && pip install -r requirements.txt \
@@ -102,8 +102,7 @@ EXPOSE 8000
 # 'route registration broken' - none of which the old import-only check
 # would have caught.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl --fail --silent --show-error http://127.0.0.1:${PORT}/health \
-        || exit 1
+    CMD curl --fail --silent --show-error http://127.0.0.1:${PORT}/health
 
 # Default command: serve the Flask app via waitress, a production WSGI
 # server. Flask's built-in dev server explicitly warns against

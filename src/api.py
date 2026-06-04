@@ -4,19 +4,19 @@ HTTP API wrapping the Skincare Routine Classifier.
 A deliberately small Flask app that exposes the pure component as a
 network service. Three endpoints, three concerns:
 
-* ``POST /recommend`` - the actual business endpoint
-* ``GET  /health``    - liveness probe consumed by Docker / Jenkins
-* ``GET  /version``   - simple build-traceability stamp
+* POST /recommend - the actual business endpoint
+* GET  /health - liveness probe consumed by Docker / Jenkins
+* GET  /version - simple build-traceability stamp
 
 Design notes
 ------------
 * Routing and parsing only - all business rules stay in
-  ``src/component.py``. This keeps the API layer trivially testable and
+  src/component.py. This keeps the API layer trivially testable and
   the unit tests of the component layer unaffected.
-* Validation errors return ``400`` with a JSON body rather than the
+* Validation errors return 400 with a JSON body rather than the
   default Flask HTML traceback - safer and more useful to API consumers.
-* The app is constructed via a factory (``create_app``) so each test
-  gets its own isolated ``app.test_client()`` without leaking global
+* The app is constructed via a factory (create_app) so each test
+  gets its own isolated app.test_client() without leaking global
   state between cases.
 """
 
@@ -34,24 +34,24 @@ from src.component import (
 
 
 # Bumped manually with each meaningful release. Kept here (not in a
-# generated file) so it shows up in code review and ships with the image.
+# generated file) so it shows up in code review and ships with the image
 API_VERSION: str = "1.0.0"
 
 
 def create_app(config: Mapping[str, Any] | None = None) -> Flask:
     """Application factory.
 
-    Using a factory (vs a module-level ``app = Flask(__name__)``) means:
+    Using a factory (vs a module-level app = Flask(__name__)) means:
     * Tests can spin up isolated app instances per test.
-    * The container CMD passes a dedicated config in (e.g. ``TESTING``)
-      without monkey-patching globals.
+    * The container CMD passes a dedicated config in (e.g. TESTING)
+      without monkey-patching globals
     """
     app = Flask(__name__)
 
-    # Sensible defaults; overridable per environment via ``config``.
+    # Sensible defaults, overridable per environment via config
     app.config.update(
         # 256 KiB request cap - JSON profiles are < 1 KiB in practice, so
-        # this is generous while still bounding the attack surface.
+        # this is generous while still bounding the attack surface
         MAX_CONTENT_LENGTH=256 * 1024,
         JSON_SORT_KEYS=False,
     )
@@ -64,14 +64,14 @@ def create_app(config: Mapping[str, Any] | None = None) -> Flask:
 
 
 def _register_routes(app: Flask) -> None:
-    """Attach the three HTTP routes to ``app``."""
+    """Attach the three HTTP routes to app"""
 
     @app.get("/health")
     def health() -> Tuple[Response, int]:
         """Liveness probe.
 
         Returns a stable, machine-readable JSON document. Docker's
-        ``HEALTHCHECK`` and the Jenkins smoke-test stage both hit this
+        HEALTHCHECK and the Jenkins smoke-test stage both hit this
         endpoint to decide whether the image is functional.
         """
         return jsonify({"status": "ok", "service": "skincare-classifier"}), 200
@@ -83,8 +83,8 @@ def _register_routes(app: Flask) -> None:
         Surfaces the application version, the git commit SHA, and the
         target environment so that an operator can correlate a running
         container with a specific build *and* confirm which environment
-        it was promoted to. ``APP_ENV`` is injected by ``simulateDeploy``
-        in the Jenkinsfile (``-e APP_ENV=dev/test/staging/prod``).
+        it was promoted to. APP_ENV is injected by simulateDeploy
+        in the Jenkinsfile (-e APP_ENV=dev/test/staging/prod)
         """
         return jsonify({
             "version": API_VERSION,
@@ -100,9 +100,9 @@ def _register_routes(app: Flask) -> None:
         registered error handler below; only successful responses are
         produced inline here.
         """
-        # ``force=True`` accepts any content-type; ``silent=True`` makes
-        # Flask return ``None`` on a parse error rather than raising,
-        # so we can produce a uniform JSON error envelope.
+        # force=True accepts any content-type, silent=True makes
+        # Flask return None on a parse error rather than raising,
+        # so can produce a uniform JSON error envelope
         payload = request.get_json(force=True, silent=True)
         if payload is None:
             return jsonify({
@@ -144,14 +144,14 @@ def _register_error_handlers(app: Flask) -> None:
         }), 500
 
 
-# A module-level ``app`` is convenient for ``flask run`` and for the
-# Docker CMD; the factory remains the canonical entry point.
+# A module-level app is convenient for flask run and for the
+# Docker CMD, the factory remains the canonical entry point
 app = create_app()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    # 0.0.0.0 is intentional inside a container; production traffic
+    # 0.0.0.0 is intentional inside a container, production traffic
     # goes through waitress (see Dockerfile CMD), this fallback exists
-    # only for local development.
+    # only for local development
     host = os.environ.get("HOST", "127.0.0.1")
     app.run(host=host, port=int(os.environ.get("PORT", "8000")))

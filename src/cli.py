@@ -1,20 +1,20 @@
 """
 Command-line entrypoint for the Skincare Routine Classifier.
 
-Wrapping the pure ``recommend_skincare_routine`` function in a small CLI
+Wrapping the pure recommend_skincare_routinefunction in a small CLI
 turns the library into an artefact that can be exercised by a Jenkins
 smoke-test stage and by a human operator with one command. The CLI is
 deliberately thin: argument parsing and JSON I/O only - all business
-logic stays in ``src/component.py`` where it is unit-tested.
+logic stays in src/component.py where it is unit-tested.
 
 Exit codes
 ----------
 The exit code is meaningful so that a CI pipeline (and any shell script)
 can branch on it without parsing stdout:
 
-* ``0``  - success, routine printed to stdout as JSON
-* ``2``  - the user-supplied profile failed validation
-* ``3``  - the input file could not be read or was not valid JSON
+* 0 - success, routine printed to stdout as JSON
+* 2 - the user-supplied profile failed validation
+* 3 - the input file could not be read or was not valid JSON
 
 Exit codes are stable; tests assert against them so accidental changes
 break the build.
@@ -34,22 +34,22 @@ from src.component import (
 )
 
 
-# Stable, documented exit codes - referenced by tests.
+# Stable, documented exit codes - referenced by tests
 EXIT_OK: int = 0
 EXIT_VALIDATION_ERROR: int = 2
 EXIT_INPUT_ERROR: int = 3
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Construct the argparse parser.
+    """Construct the argparse parser
 
-    Split out so tests can introspect it without invoking ``sys.exit``.
+    Split out so tests can introspect it without invoking sys.exit
     """
     parser = argparse.ArgumentParser(
         prog="skincare-cli",
         description=(
-            "Generate a personalised skincare routine from a JSON profile. "
-            "Reads from a file or stdin; writes JSON to stdout."
+            "Generate a personalised skincare routine from a JSON profile "
+            "Reads from a file or stdin; writes JSON to stdout"
         ),
     )
     parser.add_argument(
@@ -73,17 +73,17 @@ def _build_parser() -> argparse.ArgumentParser:
 def _load_profile(path: Optional[Path], stdin_text: str) -> Any:
     """Parse a JSON profile from a file or from stdin.
 
-    Returns the parsed object on success. Raises ``ValueError`` (the
-    base class of ``json.JSONDecodeError``) on a parse failure or
-    ``OSError`` on a read failure - both are caught by ``main`` and
-    mapped to ``EXIT_INPUT_ERROR``.
+    Returns the parsed object on success. Raises ValueError (the
+    base class of json.JSONDecodeError) on a parse failure or
+    OSError on a read failure - both are caught by main and
+    mapped to EXIT_INPUT_ERROR
     """
     if path is not None:
-        # ``Path.read_text`` raises OSError if the file is unreadable,
-        # which propagates up to ``main`` for a single, consistent
-        # exit-code mapping.
+        # Path.read_text raises OSError if the file is unreadable,
+        # which propagates up to main for a single, consistent
+        # exit-code mapping
         return json.loads(path.read_text(encoding="utf-8"))
-    # Empty stdin is an input error rather than a silent success.
+    # Empty stdin is an input error rather than a silent success
     if not stdin_text.strip():
         raise ValueError("No profile provided on stdin")
     return json.loads(stdin_text)
@@ -98,20 +98,20 @@ def main(
 ) -> int:
     """Run the CLI and return an exit code.
 
-    The function never calls ``sys.exit`` directly - it returns the code
-    instead so tests can call ``main([...])`` and assert on the return
-    value. The thin ``if __name__ == "__main__"`` block at the bottom
-    is the only place that actually exits the process.
+    The function never calls sys.exit directly - it returns the code
+    instead so tests can call main([...]) and assert on the return
+    value. The thin if __name__ == "__main__" block at the bottom
+    is the only place that actually exits the process
 
     Parameters
     ----------
     argv : sequence of str, optional
-        Argument vector. Defaults to ``sys.argv[1:]`` when ``None``.
+        Argument vector. Defaults to sys.argv[1:] when None
     stdin, stdout, stderr : file-like, optional
         Injectable streams for testability. Default to the real
-        ``sys.*`` streams.
+        sys.* streams
     """
-    # Resolve I/O lazily so tests can inject ``io.StringIO``.
+    # Resolve I/O lazily so tests can inject io.StringIO
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
     stderr = stderr if stderr is not None else sys.stderr
@@ -144,14 +144,14 @@ def main(
     # ---- Render output --------------------------------------------------
     indent = 2 if args.pretty else None
     json.dump(result, stdout, indent=indent, sort_keys=False)
-    # ``json.dump`` does not append a newline; do so for shell-friendly
-    # behaviour (e.g. ``$(cli) | jq .``).
+    # json.dump does not append a newline; do so for shell-friendly
+    # behaviour (e.g. $(cli) | jq .)
     stdout.write("\n")
     return EXIT_OK
 
 
-# Defensive default for the ``__main__`` block: ``argv`` is taken from
-# ``sys.argv`` and the process exits with the returned code.
+# Defensive default for the __main__ block: argv is taken from
+# sys.argv and the process exits with the returned code
 def _entrypoint(argv: Optional[List[str]] = None) -> None:  # pragma: no cover
     sys.exit(main(argv))
 

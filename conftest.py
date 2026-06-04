@@ -1,4 +1,4 @@
-"""Make the project root importable so ``from src.component import ...``
+"""Make the project root importable so from src.component import ...
 works whether pytest is invoked from the project root or from within an
 IDE that uses a different working directory."""
 

@@ -4,7 +4,7 @@ Tests for the CLI entrypoint.
 The CLI is a thin shell around the component, so these tests focus on
 the I/O boundaries it owns: argument parsing, JSON in / JSON out, and
 exit-code mapping. Component-level logic is already covered exhaustively
-in ``tests/test_component.py``,  deliberately do not retest it here.
+in tests/test_component.py,  deliberately do not retest it here.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def valid_profile() -> Dict[str, Any]:
 
 
 def _run(argv, stdin_text: str = "") -> tuple[int, str, str]:
-    """Invoke ``cli.main`` with captured streams and return ``(code, out, err)``.
+    """Invoke cli.main with captured streams and return (code, out, err).
 
     A small helper keeps each test focused on assertions rather than
     boilerplate around stream injection.
@@ -67,7 +67,7 @@ class TestStdinHappyPath:
 
 
 class TestFileInput:
-    """The CLI must accept ``-i path/to/profile.json`` equivalently."""
+    """The CLI must accept -i path/to/profile.json equivalently."""
 
     def test_reads_profile_from_file(self, tmp_path, valid_profile):
         profile_path = tmp_path / "profile.json"
@@ -108,7 +108,7 @@ class TestStdinErrors:
 
 
 class TestValidationErrors:
-    """Domain validation failures must map to ``EXIT_VALIDATION_ERROR``."""
+    """Domain validation failures must map to EXIT_VALIDATION_ERROR"""
 
     def test_invalid_profile_returns_validation_error_code(self, valid_profile):
         valid_profile["skin_type"] = "alien"
@@ -130,9 +130,9 @@ class TestValidationErrors:
 def test_parser_has_documented_flags():
     """A small belt-and-braces check on the CLI's public contract.
 
-    If a future change accidentally drops ``-i`` or ``--pretty`` (both
+    If a future change accidentally drops -i or -pretty (both
     are documented in the README), this test fails immediately rather
-    than waiting for a user to discover it.
+    than waiting for a user to discover it
     """
     parser = cli._build_parser()
     option_strings = {action.option_strings[0] for action in parser._actions

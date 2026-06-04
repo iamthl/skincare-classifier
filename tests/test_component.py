@@ -3,9 +3,9 @@ Test suite for the Skincare Routine Classifier.
 
 Goals
 -----
-* Cover every decision branch in ``recommend_skincare_routine`` so the
+* Cover every decision branch in recommend_skincare_routine so the
   CI coverage gate is meaningful.
-* Use ``@pytest.mark.parametrize`` to drive concise, table-style tests.
+* Use @pytest.mark.parametrize to drive concise, table-style tests.
 * Exercise normal cases, edge cases, boundary values and failure modes
   (each custom exception is asserted separately).
 * Keep tests independent and deterministic so they can be re-run in any
@@ -76,11 +76,11 @@ class TestHappyPath:
 
     def test_morning_always_ends_with_sunscreen(self, baseline_profile):
         result = recommend_skincare_routine(baseline_profile)
-        # SPF is critical regardless of preference; verify the rule.
+        # SPF is critical regardless of preference; verify the rule
         assert "SPF" in result["morning_routine"][-1]
 
     def test_function_is_deterministic(self, baseline_profile):
-        # Two identical calls must produce equal outputs (no hidden state).
+        # Two identical calls must produce equal outputs (no hidden state)
         a = recommend_skincare_routine(dict(baseline_profile))
         b = recommend_skincare_routine(dict(baseline_profile))
         assert a == b
@@ -100,7 +100,7 @@ class TestHappyPath:
 def test_every_skin_type_is_accepted(baseline_profile, skin_type):
     baseline_profile["skin_type"] = skin_type
     result = recommend_skincare_routine(baseline_profile)
-    # Every skin type produces a non-empty morning routine.
+    # Every skin type produces a non-empty morning routine
     assert result["morning_routine"]
 
 
@@ -115,7 +115,7 @@ def test_every_climate_is_accepted(baseline_profile, climate):
 def test_budget_drives_notes(baseline_profile, budget):
     baseline_profile["budget"] = budget
     result = recommend_skincare_routine(baseline_profile)
-    # The first note always describes the budget tier.
+    # The first note always describes the budget tier
     assert result["notes"], "expected a budget tier note"
     assert any(budget in n.lower() or "tier" in n.lower() or
                "premium" in n.lower() or "drugstore" in n.lower() or
@@ -236,7 +236,7 @@ class TestClimateRules:
         baseline_profile["skin_type"] = "normal"
         baseline_profile["climate"] = "humid"
         result = recommend_skincare_routine(baseline_profile)
-        # Heavy "Rich cream" wording should not survive in humid climates
+        # Heavy Rich cream wording should not survive in humid climates
         assert all(
             "Rich cream" not in s for s in result["morning_routine"]
         )
@@ -253,8 +253,8 @@ class TestClimateRules:
         self, baseline_profile
     ):
         """dry skin + humid climate is the only combination that triggers
-        the Rich-cream → Lightweight-lotion substitution rule in
-        ``_moisturiser_for``. Without this test that branch was never taken."""
+        the Rich-cream -> Lightweight-lotion substitution rule in
+        _moisturiser_for. Without this test that branch was never taken."""
         baseline_profile["skin_type"] = "dry"
         baseline_profile["climate"] = "humid"
         result = recommend_skincare_routine(baseline_profile)

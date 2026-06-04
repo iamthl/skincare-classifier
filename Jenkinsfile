@@ -10,7 +10,7 @@
 //       * Static Typing   - mypy   (type-level defects)
 //       * Security (SAST) - bandit (source-level CWE patterns)
 //       * Security (SCA)  - pip-audit (dependency CVEs)
-//       * Test + Coverage - pytest + branch coverage, fails below 95%
+//       * Test + Coverage - pytest + branch coverage, fails below 100%
 //   Build Docker Image    (only after every quality gate passes)
 //   Image Smoke Test      (proves the built image is actually functional)
 //   Promote to dev        (auto)
@@ -32,23 +32,17 @@
 // =============================================================================
 
 pipeline {
-    // 'any' is appropriate for a teaching context; in production this would
-    // typically be a labelled agent (e.g. 'docker && linux').
+    // any is appropriate for a teaching context; in production this would
+    // typically be a labelled agent (e.g. 'docker && linux')
     agent any
 
     // -------------------------------------------------------------------------
     // Global options - applied to every stage.
     // -------------------------------------------------------------------------
     options {
-        // Cap total wall time so a stuck stage cannot block the executor forever.
         timeout(time: 30, unit: 'MINUTES')
-        // Retain only the most recent runs to keep disk usage bounded.
         buildDiscarder(logRotator(numToKeepStr: '15', artifactNumToKeepStr: '5'))
-        // Add timestamps to every console line - invaluable when diagnosing
-        // long-running stages.
         timestamps()
-        // Abort previously-running builds when a new commit lands on the same
-        // branch; nobody benefits from CI on stale code.
         disableConcurrentBuilds()
     }
 
@@ -57,14 +51,14 @@ pipeline {
     // -------------------------------------------------------------------------
     environment {
         // Quality thresholds enforced by the pipeline (single source of truth).
-        // Set to 100 because the suite achieves 100% branch coverage; a gate
-        // below the actual figure would allow regressions to hide silently.
+        // Set to 100 because the suite achieves 100% branch coverage. A gate
+        // below the actual figure would allow regressions to hide silently
         COVERAGE_MIN    = '100'
         // Docker image coordinates - SHA tag gives every build a unique,
-        // immutable identity; the 'latest' tag is *not* applied automatically.
+        // immutable identity. The latest tag is not applied automatically
         IMAGE_NAME      = 'skincare-routine-classifier'
         IMAGE_TAG       = "${env.GIT_COMMIT?.take(8) ?: env.BUILD_NUMBER}"
-        // Make Python output unbuffered so Jenkins streams logs in real time.
+        // Make Python output unbuffered so Jenkins streams logs in real time
         PYTHONUNBUFFERED = '1'
         PYTHONDONTWRITEBYTECODE = '1'
     }
@@ -155,7 +149,7 @@ pipeline {
                 // mypy catches a class of defects flake8 cannot see (wrong
                 // types, missing return annotations on callable boundaries,
                 // unsound Optional handling, etc.). Failing here keeps the
-                // type contracts honoured at every commit.
+                // type contracts honoured at every commit
                 stage('Static Typing (mypy)') {
                     steps {
                         script {
@@ -190,12 +184,10 @@ pipeline {
                                 sh '''
                                     set -euxo pipefail
                                     bandit -r src -f json -o bandit-report.json
-                                    bandit -r src
                                 '''
                             } else {
                                 bat '''
                                     bandit -r src -f json -o bandit-report.json || exit /b 1
-                                    bandit -r src
                                 '''
                             }
                         }
@@ -211,10 +203,9 @@ pipeline {
                 // --- 3d. Security (SCA) ---------------------------------------
                 // pip-audit cross-references every pinned dependency in
                 // requirements.txt against the PyPA / OSV vulnerability
-                // database. Catches the "we shipped a vulnerable library"
-                // failure mode that lint and unit tests cannot detect.
-                // ``--strict`` makes a *finding* a build failure, exactly
-                // matching the Week 11 lecture's notion of a security gate.
+                // database
+                // --strict makes a finding a build failure, exactly
+                // matching the Week 11 lecture's notion of a security gate
                 stage('Security SCA (pip-audit)') {
                     steps {
                         script {
@@ -290,12 +281,12 @@ pipeline {
         }
 
         // ---------------------------------------------------------------------
-        // 4. Build the Docker image (only after all quality gates have passed).
-        //    Built ONCE; the same tag is promoted through every environment.
+        // 4. Build the Docker image (only after all quality gates have passed)
+        //    Built ONCE, the same tag is promoted through every environment
         // ---------------------------------------------------------------------
         stage('Build Docker Image') {
             // Skip this stage when the Docker daemon is unavailable (e.g. when
-            // the pipeline is being validated on a controller-only node).
+            // the pipeline is being validated on a controller-only node)
             when {
                 expression { return isDockerAvailable() }
             }
@@ -333,23 +324,23 @@ pipeline {
         }
 
         // ---------------------------------------------------------------------
-        // 4b. Container vulnerability scan (Trivy) — informational.
-        //     pip-audit covers Python package CVEs; it cannot see CVEs in the
+        // 4b. Container vulnerability scan (Trivy) - informational.
+        //     pip-audit covers Python package CVEs. It cannot see CVEs in the
         //     Debian OS packages inside python:3.11-slim-bookworm. Trivy closes
-        //     that gap by scanning the built image — OS layer + Python
-        //     site-packages — for HIGH and CRITICAL findings.
+        //     that gap by scanning the built image - OS layer + Python
+        //     site-packages - for HIGH and CRITICAL findings.
         //
         //     Why --exit-code 0 (informational, not blocking):
-        //     The Dockerfile runtime stage already runs `apt-get upgrade -y`
+        //     The Dockerfile runtime stage already runs apt-get upgrade -y
         //     to apply every currently available OS package fix. Despite this,
         //     Trivy may still report HIGH/CRITICAL findings because vulnerability
-        //     databases flag a CVE as "fixable" before the distribution
+        //     databases flag a CVE as fixable before the distribution
         //     maintainer has shipped a patched package to the apt repository.
         //     There is an inherent lag between upstream disclosure and a Debian
         //     package landing in bookworm. Blocking the pipeline on CVEs that
         //     apt cannot resolve forces a deadlock: the image cannot be improved
         //     further, yet the pipeline never delivers — the failure mode the
-        //     Week 8 "tool sprawl" slide (slide 15) warns against.
+        //     Week 8 "tool sprawl" slide warns against
         //
         //     Keeping Trivy informational means:
         //       * The scan runs on every build — the audit trail is complete.
@@ -361,11 +352,11 @@ pipeline {
         //     patched, change --exit-code to 1.
         //
         //     --ignore-unfixed restricts output to CVEs that have a released
-        //     fix, keeping the report signal-rich rather than noisy.
+        //     fix, keeping the report signal-rich rather than noisy
         //
         //     Trivy is pulled as a Docker image on demand so no host
         //     installation is needed. The JSON report is written back into the
-        //     Jenkins workspace via a bind mount.
+        //     Jenkins workspace via a bind mount
         // ---------------------------------------------------------------------
         stage('Container Scan (Trivy)') {
             when {
@@ -394,14 +385,6 @@ pipeline {
                                     --format json \\
                                     --output /workspace/trivy-report.json \\
                                     ${fullName}
-
-                            # Human-readable summary to the console log.
-                            docker run --rm \\
-                                -v /var/run/docker.sock:/var/run/docker.sock \\
-                                aquasec/trivy:latest image \\
-                                    --severity HIGH,CRITICAL \\
-                                    --ignore-unfixed \\
-                                    ${fullName}
                         """
                     } else {
                         bat """
@@ -420,7 +403,7 @@ pipeline {
             post {
                 always {
                     // Archive even on failure — a red scan leaves a record of
-                    // exactly which CVEs blocked the build.
+                    // exactly which CVEs blocked the build
                     archiveArtifacts artifacts: 'trivy-report.json',
                                      allowEmptyArchive: true
                 }
@@ -430,11 +413,11 @@ pipeline {
         // ---------------------------------------------------------------------
         // 5. Smoke test - actually run the image. A green build that produces a
         //    broken container is worse than a red build, so prove the image is
-        //    functional before declaring success.
+        //    functional before declaring success
         //
         //    The new image serves HTTP, so the smoke test starts a container,
         //    waits for /health, posts a profile to /recommend and asserts the
-        //    JSON response. This exercises the full WSGI stack inside Docker.
+        //    JSON response. This exercises the full WSGI stack inside Docker
         // ---------------------------------------------------------------------
         stage('Image Smoke Test') {
             when {
@@ -493,13 +476,13 @@ pipeline {
 
         // ---------------------------------------------------------------------
         // 6. Environment promotion - the same image is deployed to four
-        //    environments in sequence. Dev is automatic; test/staging/prod
+        //    environments in sequence. Dev is automatic, test/staging/prod
         //    require a human approval. This mirrors the Week 8 lecture's
-        //    "build once, promote with gates" flow (slides 22-24).
+        //    "build once, promote with gates" flow 
         //
-        //    The 'deploy' step here is a simulation: in a real Kubernetes
-        //    cluster it would 'helm upgrade --install', in ECS it would
-        //    'aws ecs update-service'. The pipeline shape is the same.
+        //    The deploy step here is a simulation: in a real Kubernetes
+        //    cluster it would helm upgrade --install, in ECS it would
+        //    aws ecs update-service. The pipeline shape is the same.
         // ---------------------------------------------------------------------
         stage('Deploy to dev') {
             when { expression { return isDockerAvailable() } }

@@ -12,7 +12,6 @@ pipeline. Validation, normalisation and recommendation are kept in
 separate helpers to maximise readability, testability and to keep
 each function below the project's flake8 complexity gate.
 
-Author : CSY3056 - Assignment 1
 Python : 3.11+
 """
 
@@ -24,8 +23,8 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Tuple
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-# Using frozensets gives O(1) membership tests *and* immutability, which
-# prevents accidental mutation of the allowed-value vocabularies.
+# Using frozensets gives O(1) membership tests and immutability, which
+# prevents accidental mutation of the allowed-value vocabularies
 
 VALID_SKIN_TYPES: FrozenSet[str] = frozenset(
     {"oily", "dry", "combination", "normal", "sensitive"}
@@ -53,13 +52,13 @@ VALID_PREFERENCES: FrozenSet[str] = frozenset(
 
 # Ingredients which are recognised as sensitivities. Anything outside this
 # set is still accepted (users may know their own triggers), but the known
-# ones drive built-in exclusion rules.
+# ones drive built-in exclusion rules
 KNOWN_SENSITIVITIES: FrozenSet[str] = frozenset(
     {"fragrance", "alcohol", "essential_oils", "retinoids", "salicylic_acid"}
 )
 
 # Age must be a non-negative integer; an upper bound guards against typos
-# (e.g. someone entering 200 instead of 20).
+# (e.g. someone entering 200 instead of 20)
 MIN_AGE: int = 0
 MAX_AGE: int = 120
 
@@ -69,10 +68,10 @@ MAX_AGE: int = 120
 # ---------------------------------------------------------------------------
 # A small hierarchy lets callers either catch everything (InvalidProfileError)
 # or react to a specific failure mode. This is friendlier to consumers of
-# this component than raising bare ValueError / TypeError everywhere.
+# this component than raising bare ValueError / TypeError everywhere
 
 class InvalidProfileError(Exception):
-    """Base class for any problem with the supplied ``user_profile``."""
+    """Base class for any problem with the supplied user_profile."""
 
 
 class MissingFieldError(InvalidProfileError):
@@ -91,7 +90,7 @@ class IncompatibleSelectionError(InvalidProfileError):
 # Validation
 # ---------------------------------------------------------------------------
 # Each field has its own tiny validator. Splitting the work this way keeps
-# cyclomatic complexity low and lets the test suite target one rule at a time.
+# cyclomatic complexity low and lets the test suite target one rule at a time
 
 REQUIRED_FIELDS: Tuple[str, ...] = (
     "skin_type",
@@ -118,8 +117,8 @@ def _check_choice(field: str, value: Any, allowed: FrozenSet[str]) -> None:
 
 
 def _check_age(age: Any) -> None:
-    # ``bool`` is a subclass of ``int``; reject it explicitly so True/False
-    # cannot sneak through the type check.
+    # bool is a subclass of int, reject it explicitly so True/False
+    # cannot sneak through the type check
     if isinstance(age, bool) or not isinstance(age, int):
         raise InvalidFieldValueError(
             f"age must be an int, got {type(age).__name__}"
@@ -150,7 +149,7 @@ def _check_concerns(concerns: Any) -> None:
 def _check_combinations(age: int, concerns: List[str]) -> None:
     # Safety rule: anti-aging is not appropriate for minors. Catching this
     # at validation time prevents downstream rules from producing an unsafe
-    # routine in the first place.
+    # routine in the first place
     if age < 18 and "aging" in concerns:
         raise IncompatibleSelectionError(
             "Anti-aging routines are not appropriate for users under 18."
@@ -158,10 +157,10 @@ def _check_combinations(age: int, concerns: List[str]) -> None:
 
 
 def _validate_profile(profile: Mapping[str, Any]) -> None:
-    """Validate the structure and contents of ``profile``.
+    """Validate the structure and contents of profile
 
-    Raises one of the ``InvalidProfileError`` subclasses on failure.
-    Splitting the work into focused helpers keeps this dispatcher trivial.
+    Raises one of the InvalidProfileError subclasses on failure.
+    Splitting the work into focused helpers keeps this dispatcher trivial
     """
     if not isinstance(profile, Mapping):
         raise InvalidProfileError(
@@ -241,11 +240,11 @@ def _budget_tier_note(budget: str) -> str:
 
 
 def _item_triggers_sensitivity(lower_item: str, sens: str) -> bool:
-    """Return True iff ``lower_item`` contains ``sens`` and is not labelled
+    """Return True iff lower_item contains sens and is not labelled
     as being free of it (e.g. "fragrance-free milk cleanser")."""
     if sens not in lower_item:
         return False
-    # Recognise common "free-from" phrasing to avoid false positives.
+    # Recognise common "free-from" phrasing to avoid false positives
     if f"{sens}-free" in lower_item or f"{sens} free" in lower_item:
         return False
     return True
@@ -259,7 +258,7 @@ def _filter_against_sensitivities(
     Returns the surviving items plus a list of warnings explaining the
     removals. Matching is case-insensitive and substring-based so that
     "Salicylic acid 2% serum" is removed when the user declares
-    ``"salicylic_acid"`` as a sensitivity, while "Fragrance-free milk
+    "salicylic_acid" as a sensitivity, while "Fragrance-free milk
     cleanser" is *kept* when the user is sensitive to fragrance.
     """
     kept: List[str] = []
@@ -367,19 +366,19 @@ def _build_weekly_treatments(
 def _apply_minimal_preference(
     morning: List[str], evening: List[str], preference: str,
 ) -> Tuple[List[str], List[str]]:
-    """Trim morning/evening lists to the essentials for 'minimal' users.
+    """Trim morning/evening lists to the essentials for minimal users.
 
     Honoured *after* concern-based additions so the SPF and moisturiser
     are still preserved when we cut the middle out.
 
-    Index assumptions — guaranteed by ``_build_morning_routine``'s fixed order:
-      * ``morning[0]``  — always the cleanser (first step appended)
-      * ``morning[-2]`` — always the moisturiser (second-to-last, appended
+    Index assumptions — guaranteed by _build_morning_routine's fixed order:
+      * morning[0]  — always the cleanser (first step appended)
+      * morning[-2] — always the moisturiser (second-to-last, appended
                           before SPF by every code path in the builder)
-      * ``morning[-1]`` — always the SPF (unconditional last append)
-    The property test ``test_morning_routine_always_ends_with_spf`` asserts
-    the SPF invariant across 100 randomly generated profiles; if a future
-    change to ``_build_morning_routine`` breaks the ordering, that property
+      * morning[-1] — always the SPF (unconditional last append)
+    The property test test_morning_routine_always_ends_with_spf asserts
+    the SPF invariant across 100 randomly generated profiles. If a future
+    change to _build_morning_routine breaks the ordering, that property
     will fail before this function can produce a corrupt routine.
     """
     if preference != "minimal":
@@ -420,7 +419,7 @@ def _strip_retinoids_for_minors(
 def recommend_skincare_routine(
     user_profile: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """Generate a personalised skincare routine for ``user_profile``.
+    """Generate a personalised skincare routine for user_profile.
 
     The function is deterministic: identical inputs always produce
     identical outputs, which is essential for reproducible CI testing.
@@ -429,14 +428,14 @@ def recommend_skincare_routine(
     ----------
     user_profile : Mapping[str, Any]
         Required keys:
-            * ``skin_type`` (str): one of ``VALID_SKIN_TYPES``
-            * ``age`` (int): 0..120 inclusive
-            * ``concerns`` (list[str]): each in ``VALID_CONCERNS``
-            * ``climate`` (str): one of ``VALID_CLIMATES``
-            * ``budget`` (str): one of ``VALID_BUDGETS``
-            * ``routine_preference`` (str): one of ``VALID_PREFERENCES``
+            * skin_type (str): one of VALID_SKIN_TYPES
+            * age (int): 0..120 inclusive
+            * concerns (list[str]): each in VALID_CONCERNS
+            * climate (str): one of VALID_CLIMATES
+            * budget (str): one of VALID_BUDGETS
+            * routine_preference (str): one of VALID_PREFERENCES
         Optional keys:
-            * ``sensitivities`` (list[str]): ingredients to avoid
+            * sensitivities (list[str]): ingredients to avoid
 
     Returns
     -------
@@ -455,7 +454,7 @@ def recommend_skincare_routine(
     Raises
     ------
     InvalidProfileError
-        If ``user_profile`` is not a mapping.
+        If user_profile is not a mapping.
     MissingFieldError
         If a required key is missing.
     InvalidFieldValueError
@@ -513,10 +512,10 @@ def recommend_skincare_routine(
         spf_step = morning[-1]
         morning_body, w1 = _filter_against_sensitivities(morning[:-1], sensitivities)
         morning = morning_body + [spf_step]
-    else:  # pragma: no cover  — SPF is always the last morning step (see
+    else:  # pragma: no cover  - SPF is always the last morning step (see
         # _build_morning_routine and _apply_minimal_preference); this branch
         # is defensive code for a future rule change that drops SPF, not a
-        # reachable path via the current public API.
+        # reachable path via the current public API
         morning, w1 = _filter_against_sensitivities(morning, sensitivities)
     evening, w2 = _filter_against_sensitivities(evening, sensitivities)
     weekly, w3 = _filter_against_sensitivities(weekly, sensitivities)

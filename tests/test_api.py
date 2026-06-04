@@ -1,7 +1,7 @@
 """
 Tests for the Flask HTTP API.
 
-We use Flask's built-in ``test_client`` rather than spinning up a real
+Use Flask's built-in test_client rather than spinning up a real
 server: it exercises the full WSGI request/response cycle in-process,
 so the assertions are realistic without the test suite needing a port.
 """
@@ -37,7 +37,7 @@ def valid_profile() -> Dict[str, Any]:
 
 
 class TestHealthEndpoint:
-    """``/health`` is the contract Docker's HEALTHCHECK relies on."""
+    """/health is the contract Docker's HEALTHCHECK relies on."""
 
     def test_returns_200_with_status_ok(self, client):
         response = client.get("/health")
@@ -94,7 +94,7 @@ class TestRecommendEndpoint:
     def test_returns_routine_without_optional_sensitivities_key(
         self, client
     ):
-        """``sensitivities`` is optional in the component; the API must
+        """sensitivities is optional in the component. The API must
         accept a profile that omits it entirely (not just an empty list).
 
         This proves the wire contract: callers that don't know about
